@@ -1,33 +1,72 @@
-# AVENAN Voice Intelligence Engine
+# AVENAN Voice Intelligence Engine V1.0
 
-VOICE IS THE MASTER TIMELINE.
+**VOICE IS THE MASTER TIMELINE.**
 
-Pipeline:
-Audio -> Gemini word timestamps -> Pause/Rhythm Analysis -> Narrative Beats -> Visual Beats -> Shot Plan -> Image/Video Prompt JSON.
+Standalone engine for converting finished narration audio into an editable, machine-readable production timeline.
 
-Core outputs:
-- word_timestamps.json
-- audio_metrics.json
-- narrative_beats.json
-- visual_timeline.json
-- prompts.json
-- transcript.txt
-- subtitle.srt
-- beat_sheet.csv
+## Pipeline
 
-This repository is the source of truth for the standalone Voice Intelligence Engine.
+```text
+Audio
+→ local waveform
+→ word-level timestamps
+→ pause/rhythm metrics
+→ phrase segmentation
+→ narrative intelligence
+→ visual intelligence
+→ editable beat timeline
+→ JSON / CSV / SRT / TXT
+```
 
-MVP scope:
-1. Upload MP3/WAV/M4A.
-2. Transcribe in verbatim mode with word-level timestamps.
-3. Compute pauses from adjacent word boundaries.
-4. Compute speaking-rate windows.
-5. Segment phrases and candidate beats.
-6. Convert narrative beats into visual beats.
-7. Export structured JSON for downstream Flow/Veo/Image systems.
+## Implemented V1.0
+- MP3/WAV/M4A/AAC/OGG/FLAC upload
+- browser-side waveform rendering with Web Audio API
+- Gemini word-level transcription timestamps
+- pauseAfterMs + pause classes
+- phrase duration + words-per-second
+- narrativeFunction / emotion / intensity
+- semanticShift / majorShift
+- visual actions: HOLD, MICRO_MOTION, COMPOSITION_CHANGE, SHOT_CHANGE, SCENE_CHANGE, SILENCE_HOLD
+- channel profiles: THE_IRON_MIND and GENERIC_VOICE_FIRST
+- editable Beat Inspector
+- manual split / merge-next
+- regenerate selected visual beat only
+- imagePrompt + videoPrompt
+- exports: visual_timeline.json, beat_sheet.csv, subtitle.srt, prompts.txt
+- server-side Gemini API key
+- responsive desktop/mobile UI
+- GitHub Actions build validation
 
-Planned evolution:
-- V0.2 browser waveform + RMS/peak envelope using Web Audio API
-- V0.3 Gemini semantic/emotion pass
-- V0.4 Visual Bible profiles per channel
-- V0.5 direct handoff to Veo3go/Flow jobs
+## Architecture rule
+Timing is locked before semantic analysis. Gemini may classify meaning and propose visuals, but it must not rewrite the master word timestamps.
+
+## Run locally
+
+```bash
+npm install
+cp .env.example .env
+# add GEMINI_API_KEY to your environment
+npm run dev
+```
+
+Frontend: `http://localhost:5173`
+Server: `http://localhost:3001`
+
+> Node does not automatically load `.env` in this repo. Set `GEMINI_API_KEY` in your shell/runtime or use the secret/environment system provided by Google AI Studio/deployment host.
+
+## Google AI Studio
+Import this repository directly and read `docs/AI_STUDIO_IMPORT.md` plus `MASTER_BUILD_PROMPT.md`.
+
+Repository source of truth:
+`binhvanhg-hash/Voice-Intelligence-Engine`
+
+## Key files
+- `server.js` — transcription + semantic/visual API
+- `src/main.jsx` — waveform/timeline/editor/export UI
+- `src/engine/` — reusable timing/visual policy modules
+- `schemas/voice_visual_timeline.schema.json` — canonical timeline contract
+- `docs/ARCHITECTURE.md` — system architecture
+- `docs/TEST_PLAN.md` — validation gates
+
+## First production test
+Use a 20–40 second THE IRON MIND narration before long-form audio.
