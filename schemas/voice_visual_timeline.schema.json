@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AVENAN Voice Visual Timeline",
+  "type": "object",
+  "required": ["project_id", "audio", "words", "beats"],
+  "properties": {
+    "project_id": {"type": "string"},
+    "audio": {
+      "type": "object",
+      "required": ["duration_sec"],
+      "properties": {
+        "duration_sec": {"type": "number"},
+        "language": {"type": "string"}
+      }
+    },
+    "words": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "start", "end"],
+        "properties": {
+          "text": {"type": "string"},
+          "start": {"type": "number"},
+          "end": {"type": "number"},
+          "pause_after_ms": {"type": "integer"}
+        }
+      }
+    },
+    "beats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "start", "end", "narration", "visual"],
+        "properties": {
+          "id": {"type": "string"},
+          "start": {"type": "number"},
+          "end": {"type": "number"},
+          "narration": {"type": "string"},
+          "narrative_function": {"type": "string"},
+          "emotion": {"type": "string"},
+          "intensity": {"type": "number"},
+          "visual_action": {
+            "type": "string",
+            "enum": ["HOLD", "MICRO_MOTION", "COMPOSITION_CHANGE", "SHOT_CHANGE", "SCENE_CHANGE", "SILENCE_HOLD"]
+          },
+          "visual": {
+            "type": "object",
+            "properties": {
+              "subject": {"type": "string"},
+              "environment": {"type": "string"},
+              "action": {"type": "string"},
+              "camera": {"type": "string"},
+              "motion": {"type": "string"},
+              "image_prompt": {"type": "string"},
+              "video_prompt": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
