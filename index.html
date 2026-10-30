@@ -5,9 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#ffffff" />
   <title>AVENAN Voice Intelligence Engine</title>
+  <base href="./" />
+  <script>
+    (() => {
+      const nativeFetch = window.fetch.bind(window);
+      const apiBase = new URL('.', document.baseURI);
+      window.__AVENAN_API_BASE__ = apiBase.href;
+      window.fetch = (input, init) => {
+        if (typeof input === 'string' && input.startsWith('/api/')) {
+          input = new URL(input.slice(1), apiBase).href;
+        } else if (input instanceof Request) {
+          const url = new URL(input.url, document.baseURI);
+          if (url.pathname.startsWith('/api/')) {
+            input = new Request(new URL(url.pathname.slice(1) + url.search, apiBase).href, input);
+          }
+        }
+        return nativeFetch(input, init);
+      };
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
+  <script type="module" src="./src/main.jsx"></script>
 </body>
 </html>
