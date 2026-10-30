@@ -7,7 +7,8 @@ import path from "path";
 import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT || 3000);
+const HOST = "0.0.0.0";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gemini-3.5-transcribe";
 const SEMANTIC_MODEL = process.env.SEMANTIC_MODEL || "gemini-3.8-flash";
 app.use(cors());
@@ -79,7 +80,7 @@ function fallbackAction(p) {
   return "HOLD";
 }
 
-app.get("/api/health", (req,res)=>res.json({ok:true, app:"AVENAN Voice Intelligence Engine", version:"1.0.0", transcribeModel:TRANSCRIBE_MODEL, semanticModel:SEMANTIC_MODEL}));
+app.get("/api/health", (req,res)=>res.json({ok:true, app:"AVENAN Voice Intelligence Engine", version:"1.0.1", transcribeModel:TRANSCRIBE_MODEL, semanticModel:SEMANTIC_MODEL}));
 
 app.post("/api/transcribe", upload.single("audio"), async (req,res) => {
   try {
@@ -126,6 +127,33 @@ app.post("/api/regenerate-beat", async (req,res)=>{
   } catch(e){ console.error(e); res.status(500).json({error:e.message||"Regeneration failed."}); }
 });
 
-const dist=path.resolve("dist");
-if(fs.existsSync(dist)){ app.use(express.static(dist)); app.get("*",(req,res)=>res.sendFile(path.join(dist,"index.html"))); }
-app.listen(PORT,()=>console.log(`AVENAN Voice Intelligence Engine running on ${PORT}`));
+async function mountFrontend() {
+  const dist = path.resolve("dist");
+  const builtIndex = path.join(dist, "index.html");
+
+  if (fs.existsSync(builtIndex)) {
+    app.use(express.static(dist));
+    app.use((req, res, next) => {
+      if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
+      res.sendFile(builtIndex);
+    });
+    return;
+  }
+
+  const { createServer: createViteServer } = await import("vite");
+  const vite = await createViteServer({
+    server: { middlewareMode: true, host: HOST, allowedHosts: true },
+    appType: "spa"
+  });
+  app.use(vite.middlewares);
+}
+
+async function start() {
+  await mountFrontend();
+  app.listen(PORT, HOST, () => console.log(`AVENAN Voice Intelligence Engine running on http://${HOST}:${PORT}`));
+}
+
+start().catch(err => {
+  console.error("Fatal startup error", err);
+  process.exit(1);
+});
