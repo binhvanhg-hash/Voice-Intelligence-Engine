@@ -1,0 +1,8 @@
+{
+  "name": "AVENAN Voice Intelligence Engine",
+  "description": "Voice-first visual beat planner and narrative intelligence engine transforming spoken audio into structured timeline beats.",
+  "requestFramePermissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
