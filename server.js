@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import mammoth from "mammoth";
 import os from "os";
 import fs from "fs";
 import path from "path";
@@ -12,159 +13,38 @@ const HOST = "0.0.0.0";
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL || "gemini-3.5-transcribe";
 const SEMANTIC_MODEL = process.env.SEMANTIC_MODEL || "gemini-3.8-flash";
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "30mb" }));
 
 const uploadDir = path.join(os.tmpdir(), "avenan-voice-intelligence");
 fs.mkdirSync(uploadDir, { recursive: true });
-const upload = multer({ dest: uploadDir, limits: { fileSize: 500 * 1024 * 1024, files: 8 } });
+const upload = multer({ dest: uploadDir, limits: { fileSize: 500 * 1024 * 1024, files: 20 } });
 
-function aiClient() {
-  if (!process.env.GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY on server.");
-  return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-}
-function parseOffset(v) {
-  if (v == null) return 0;
-  if (typeof v === "number") return v;
-  const s = String(v).trim();
-  const m = s.match(/^([\d.]+)s$/);
-  return m ? Number(m[1]) : Number(s) || 0;
-}
-function cleanText(words) {
-  return words.map(w => w.text).join(" ").replace(/\s+([,.;!?])/g, "$1").replace(/\s+/g, " ").trim();
-}
-function extractWords(interaction) {
-  const words = [];
-  for (const step of interaction.steps ?? []) for (const content of step.content ?? []) for (const a of content.annotations ?? []) {
-    if (a.type === "word_info") words.push({ text: a.text ?? "", start: parseOffset(a.start_offset), end: parseOffset(a.end_offset) });
-  }
-  return words.filter(w => w.text && Number.isFinite(w.start) && Number.isFinite(w.end));
-}
-function addPauseMetrics(input) {
-  return input.map((w, i) => ({ ...w, pauseAfterMs: i < input.length - 1 ? Math.max(0, Math.round((input[i + 1].start - w.end) * 1000)) : 0 }));
-}
-function pauseClass(ms) {
-  if (ms >= 1000) return "dramatic";
-  if (ms >= 700) return "strong";
-  if (ms >= 320) return "phrase";
-  if (ms >= 180) return "micro";
-  return "none";
-}
-function phraseSegments(input, phrasePauseMs = 320, maxPhraseSec = 10) {
-  const words = addPauseMetrics(input); const out = []; let bucket = [];
-  const flush = () => {
-    if (!bucket.length) return;
-    const start = bucket[0].start, end = bucket[bucket.length - 1].end;
-    const duration = Math.max(.001, end - start); const pauseAfterMs = bucket[bucket.length - 1].pauseAfterMs || 0;
-    out.push({ id: `P${String(out.length + 1).padStart(3,"0")}`, start:+start.toFixed(3), end:+end.toFixed(3), duration:+duration.toFixed(3), text:cleanText(bucket), pauseAfterMs, pauseClass:pauseClass(pauseAfterMs), wordsPerSecond:+(bucket.length/duration).toFixed(2), words:bucket });
-    bucket=[];
-  };
-  for (const w of words) {
-    bucket.push(w);
-    const duration = w.end - bucket[0].start;
-    if ((w.pauseAfterMs || 0) >= phrasePauseMs || duration >= maxPhraseSec) flush();
-  }
-  flush(); return { words, phrases: out };
-}
-function parseJson(text) {
-  const c = String(text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try { return JSON.parse(c); } catch {}
-  const a=c.indexOf("["); const b=c.lastIndexOf("]"); if(a>=0&&b>a) return JSON.parse(c.slice(a,b+1));
-  const x=c.indexOf("{"); const y=c.lastIndexOf("}"); if(x>=0&&y>x) return JSON.parse(c.slice(x,y+1));
-  throw new Error("Model returned non-JSON output.");
-}
-const ACTIONS = new Set(["HOLD","MICRO_MOTION","COMPOSITION_CHANGE","SHOT_CHANGE","SCENE_CHANGE","SILENCE_HOLD"]);
-function fallbackAction(p) {
-  if (p.pauseAfterMs >= 1000) return "SILENCE_HOLD";
-  if (p.pauseAfterMs >= 700) return "SHOT_CHANGE";
-  if (p.pauseAfterMs >= 320) return "MICRO_MOTION";
-  return "HOLD";
-}
-function cleanupFiles(files=[]){ for(const f of files) if(f?.path) fs.unlink(f.path,()=>{}); }
+function aiClient(){ if(!process.env.GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY on server."); return new GoogleGenAI({apiKey:process.env.GEMINI_API_KEY}); }
+function parseOffset(v){ if(v==null)return 0;if(typeof v==="number")return v;const s=String(v).trim(),m=s.match(/^([\d.]+)s$/);return m?Number(m[1]):Number(s)||0; }
+function cleanText(words){ return words.map(w=>w.text).join(" ").replace(/\s+([,.;!?])/g,"$1").replace(/\s+/g," ").trim(); }
+function extractWords(interaction){ const words=[];for(const step of interaction.steps??[])for(const content of step.content??[])for(const a of content.annotations??[])if(a.type==="word_info")words.push({text:a.text??"",start:parseOffset(a.start_offset),end:parseOffset(a.end_offset)});return words.filter(w=>w.text&&Number.isFinite(w.start)&&Number.isFinite(w.end)); }
+function addPauseMetrics(input){ return input.map((w,i)=>({...w,pauseAfterMs:i<input.length-1?Math.max(0,Math.round((input[i+1].start-w.end)*1000)):0})); }
+function pauseClass(ms){ if(ms>=1000)return"dramatic";if(ms>=700)return"strong";if(ms>=320)return"phrase";if(ms>=180)return"micro";return"none"; }
+function phraseSegments(input,phrasePauseMs=320,maxPhraseSec=10){ const words=addPauseMetrics(input),out=[];let bucket=[];const flush=()=>{if(!bucket.length)return;const start=bucket[0].start,end=bucket[bucket.length-1].end,duration=Math.max(.001,end-start),pauseAfterMs=bucket[bucket.length-1].pauseAfterMs||0;out.push({id:`P${String(out.length+1).padStart(3,"0")}`,start:+start.toFixed(3),end:+end.toFixed(3),duration:+duration.toFixed(3),text:cleanText(bucket),pauseAfterMs,pauseClass:pauseClass(pauseAfterMs),wordsPerSecond:+(bucket.length/duration).toFixed(2),words:bucket});bucket=[]};for(const w of words){bucket.push(w);if((w.pauseAfterMs||0)>=phrasePauseMs||w.end-bucket[0].start>=maxPhraseSec)flush()}flush();return{words,phrases:out}; }
+function parseJson(text){ const c=String(text||"").replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim();try{return JSON.parse(c)}catch{}const a=c.indexOf("["),b=c.lastIndexOf("]");if(a>=0&&b>a)return JSON.parse(c.slice(a,b+1));const x=c.indexOf("{"),y=c.lastIndexOf("}");if(x>=0&&y>x)return JSON.parse(c.slice(x,y+1));throw new Error("Model returned non-JSON output."); }
+const ACTIONS=new Set(["HOLD","MICRO_MOTION","COMPOSITION_CHANGE","SHOT_CHANGE","SCENE_CHANGE","SILENCE_HOLD"]);
+function fallbackAction(p){ if(p.pauseAfterMs>=1000)return"SILENCE_HOLD";if(p.pauseAfterMs>=700)return"SHOT_CHANGE";if(p.pauseAfterMs>=320)return"MICRO_MOTION";return"HOLD"; }
+function cleanupFiles(files=[]){ for(const f of files)if(f?.path)fs.unlink(f.path,()=>{}); }
+function ironMindHardLock(){return "Modern digital etched-ink illustration on a pure near-black canvas; black-filled forms; thin muted-white and cool-grey scratch contours; extremely restrained amber/orange rim-light accents; large negative space; contemporary cinematic 16:9 composition. NO beige/white paper, parchment, sepia, vintage sketchbook, broad charcoal-on-paper rendering, watercolor, antique props or candlelit historical mood unless narration explicitly requires it.";}
+async function readBrandFile(f){ const ext=path.extname(f.originalname||"").toLowerCase();if([".txt",".md",".json",".csv"].includes(ext))return{kind:"text",name:f.originalname,text:fs.readFileSync(f.path,"utf8").slice(0,120000)};if(ext===".docx"){const r=await mammoth.extractRawText({path:f.path});return{kind:"text",name:f.originalname,text:String(r.value||"").slice(0,120000)}}return{kind:"file",name:f.originalname,path:f.path,mime:f.mimetype||"application/octet-stream"};}
 
-app.get("/api/health", (req,res)=>res.json({ok:true, app:"AVENAN Voice Intelligence Engine", version:"1.1.0", transcribeModel:TRANSCRIBE_MODEL, semanticModel:SEMANTIC_MODEL, capabilities:["voice-audio","voice-text","visual-dna"]}));
+app.get("/api/health",(req,res)=>res.json({ok:true,app:"AVENAN Voice Intelligence Engine",version:"1.2.0",transcribeModel:TRANSCRIBE_MODEL,semanticModel:SEMANTIC_MODEL,capabilities:["projects","brand-dna","voice-audio","voice-text","visual-dna"]}));
 
-app.post("/api/transcribe", upload.single("audio"), async (req,res) => {
-  try {
-    if (!req.file) return res.status(400).json({error:"Audio file is required."});
-    const language = String(req.body.language || "").trim();
-    const phrasePauseMs = Math.max(120, Number(req.body.phrasePauseMs || 320));
-    const ai = aiClient();
-    const f = await ai.files.upload({ file:req.file.path, config:{ mimeType:req.file.mimetype || "audio/mpeg" } });
-    const transcription_config = { mode:{type:"verbatim"}, timestamp_granularities:["word"] };
-    if (language && language !== "auto") transcription_config.language_codes=[language];
-    const interaction = await ai.interactions.create({ model:TRANSCRIBE_MODEL, input:[{type:"audio",uri:f.uri,mime_type:f.mimeType}], generation_config:{transcription_config} });
-    const rawWords = extractWords(interaction);
-    if (!rawWords.length) throw new Error("No word-level timestamps returned.");
-    const { words, phrases } = phraseSegments(rawWords, phrasePauseMs);
-    const duration = words[words.length-1].end;
-    res.json({ transcript:interaction.output_text || cleanText(words), duration, wordCount:words.length, phraseCount:phrases.length, words, phrases });
-  } catch(e) { console.error(e); res.status(500).json({error:e.message || "Transcription failed."}); }
-  finally { if(req.file?.path) fs.unlink(req.file.path,()=>{}); }
-});
+app.post("/api/transcribe",upload.single("audio"),async(req,res)=>{try{if(!req.file)return res.status(400).json({error:"Audio file is required."});const language=String(req.body.language||"").trim(),phrasePauseMs=Math.max(120,Number(req.body.phrasePauseMs||320)),ai=aiClient(),f=await ai.files.upload({file:req.file.path,config:{mimeType:req.file.mimetype||"audio/mpeg"}}),transcription_config={mode:{type:"verbatim"},timestamp_granularities:["word"]};if(language&&language!=="auto")transcription_config.language_codes=[language];const interaction=await ai.interactions.create({model:TRANSCRIBE_MODEL,input:[{type:"audio",uri:f.uri,mime_type:f.mimeType}],generation_config:{transcription_config}}),rawWords=extractWords(interaction);if(!rawWords.length)throw new Error("No word-level timestamps returned.");const{words,phrases}=phraseSegments(rawWords,phrasePauseMs),duration=words[words.length-1].end;res.json({transcript:interaction.output_text||cleanText(words),duration,wordCount:words.length,phraseCount:phrases.length,words,phrases});}catch(e){console.error(e);res.status(500).json({error:e.message||"Transcription failed."})}finally{if(req.file?.path)fs.unlink(req.file.path,()=>{})}});
 
-app.post("/api/style-dna", upload.array("references",8), async (req,res)=>{
-  const files = req.files || [];
-  try {
-    if (!files.length) return res.status(400).json({error:"At least one style reference image is required."});
-    const ai = aiClient();
-    const uploaded = [];
-    for (const f of files) {
-      const x = await ai.files.upload({file:f.path,config:{mimeType:f.mimetype || "image/png"}});
-      uploaded.push({type:"image",uri:x.uri,mime_type:x.mimeType});
-    }
-    const prompt = `Analyze these reference images as a reusable production STYLE DNA, not as scene content. Return JSON object {styleDNA:{summary,linework,palette,texture,composition,characterLanguage,lighting,depth,cameraFeel,motionFeel,negativeTraits,promptPrefix,promptSuffix}}. Be concrete and operational. The DNA must capture visual grammar that can be reused across many different scenes without copying specific subjects from the references. Profile=${req.body.profile||"GENERIC_VOICE_FIRST"}.`;
-    const r = await ai.models.generateContent({model:SEMANTIC_MODEL,contents:[{role:"user",parts:[{text:prompt},...uploaded.map(x=>({fileData:{fileUri:x.uri,mimeType:x.mime_type}}))]}],config:{responseMimeType:"application/json",temperature:.2}});
-    const parsed = parseJson(r.text);
-    res.json(parsed.styleDNA ? parsed : {styleDNA:parsed});
-  } catch(e){ console.error(e); res.status(500).json({error:e.message||"Style DNA analysis failed."}); }
-  finally { cleanupFiles(files); }
-});
+app.post("/api/brand-dna",upload.array("brandFiles",20),async(req,res)=>{const files=req.files||[];try{if(!files.length)return res.status(400).json({error:"Upload at least one brand/channel file."});const ai=aiClient(),parts=[{text:`Analyze the attached channel/brand assets and create a durable BRAND DNA for production. This is the governing standard for all future scripts and visuals in this project. Return JSON only as {"brandDNA":{brandName,summary,positioning,targetAudience,corePromise,toneOfVoice,vocabulary,contentPillars,narrativeRules,visualIdentity:{palette,typography,logoUsage,composition,imagery},visualHardRules,forbiddenTraits,keyframePromptPrefix,motionPromptRules}}. Distinguish non-negotiable brand rules from optional inspiration. Project name=${req.body.projectName||"Unnamed Project"}.` }];for(const f of files){const item=await readBrandFile(f);if(item.kind==="text")parts.push({text:`FILE ${item.name}:\n${item.text}`});else{const x=await ai.files.upload({file:item.path,config:{mimeType:item.mime}});parts.push({fileData:{fileUri:x.uri,mimeType:x.mimeType}})}}const r=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:[{role:"user",parts}],config:{responseMimeType:"application/json",temperature:.15}}),parsed=parseJson(r.text);res.json(parsed.brandDNA?parsed:{brandDNA:parsed,files:files.map(f=>f.originalname)});}catch(e){console.error(e);res.status(500).json({error:e.message||"Brand DNA analysis failed."})}finally{cleanupFiles(files)}});
 
-app.post("/api/analyze-beats", async (req,res) => {
-  try {
-    const { phrases=[], profile="GENERIC_VOICE_FIRST", projectId="AVENAN_VOICE_PROJECT", voiceText="", styleDNA=null } = req.body || {};
-    if (!Array.isArray(phrases) || !phrases.length) return res.status(400).json({error:"Phrases are required."});
-    const compact = phrases.map(p=>({id:p.id,start:p.start,end:p.end,text:p.text,pauseAfterMs:p.pauseAfterMs,wordsPerSecond:p.wordsPerSecond,pauseClass:p.pauseClass}));
-    const profileText = profile === "THE_IRON_MIND" ? "Minimal hand-drawn symbolic illustration, dark/black scene canvas, chalk/charcoal feeling, simple figures/objects, subtle continuous motion, narration-led, low production cost." : "Voice-first visual essay, simple symbolic or realistic composition, restrained motion, continuity before novelty.";
-    const prompt = `You are AVENAN Voice Intelligence. Timing is LOCKED and must never change. Audio phrase timing is the master timeline. The optional VOICE TEXT is semantic reference only and may clarify exact intended wording, argument, emphasis and meaning; never use it to rewrite start/end times. The optional STYLE DNA is the visual grammar for every beat and must be preserved consistently. Return JSON object {\"items\":[...]} with exactly one item per input phrase in same order. Each item fields: id, narrativeFunction (HOOK|SETUP|TENSION|QUESTION|EVIDENCE|REVEAL|REFLECTION|TRANSITION|CTA), emotion, intensity (0..1), semanticShift boolean, majorShift boolean, visualAction (HOLD|MICRO_MOTION|COMPOSITION_CHANGE|SHOT_CHANGE|SCENE_CHANGE|SILENCE_HOLD), subject, environment, action, camera, motion, imagePrompt, videoPrompt. Prefer HOLD/MICRO_MOTION over cuts unless meaning truly changes. Do not create one new image per sentence. Every imagePrompt/videoPrompt must explicitly inherit the STYLE DNA when provided. Profile: ${profileText}. Project: ${projectId}. VOICE TEXT: ${voiceText||"[none]"}. STYLE DNA: ${styleDNA?JSON.stringify(styleDNA):"[none]"}. Phrases: ${JSON.stringify(compact)}`;
-    const ai=aiClient();
-    const result=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:prompt,config:{responseMimeType:"application/json",temperature:.25}});
-    const parsed=parseJson(result.text); const items=Array.isArray(parsed)?parsed:parsed.items;
-    if(!Array.isArray(items)) throw new Error("Semantic analysis returned no items.");
-    const beats=phrases.map((p,i)=>{ const x=items[i]||{}; return { id:`V${String(i+1).padStart(3,"0")}`, phraseId:p.id, start:p.start, end:p.end, duration:p.duration, narration:p.text, pauseAfterMs:p.pauseAfterMs, pauseClass:p.pauseClass, wordsPerSecond:p.wordsPerSecond, narrativeFunction:x.narrativeFunction||"SETUP", emotion:x.emotion||"neutral", intensity:Number.isFinite(Number(x.intensity))?Math.max(0,Math.min(1,Number(x.intensity))):.5, semanticShift:!!x.semanticShift, majorShift:!!x.majorShift, visualAction:ACTIONS.has(x.visualAction)?x.visualAction:fallbackAction(p), visual:{ subject:x.subject||"", environment:x.environment||"", action:x.action||"", camera:x.camera||"locked or subtle push-in", motion:x.motion||"subtle continuous motion", imagePrompt:String(x.imagePrompt||"").replace(/[\r\n]+/g," ").trim(), videoPrompt:String(x.videoPrompt||"").replace(/[\r\n]+/g," ").trim() } }; });
-    res.json({beats,voiceTextUsed:!!voiceText,styleDNAUsed:!!styleDNA});
-  } catch(e) { console.error(e); res.status(500).json({error:e.message || "Beat analysis failed."}); }
-});
+app.post("/api/style-dna",upload.array("references",8),async(req,res)=>{const files=req.files||[];try{if(!files.length)return res.status(400).json({error:"At least one style reference image is required."});const ai=aiClient(),uploaded=[];for(const f of files){const x=await ai.files.upload({file:f.path,config:{mimeType:f.mimetype||"image/png"}});uploaded.push({type:"image",uri:x.uri,mime_type:x.mimeType})}const prompt=`Analyze these reference images as reusable production STYLE DNA, not scene content. Return JSON object {styleDNA:{summary,linework,palette,texture,composition,characterLanguage,lighting,depth,cameraFeel,motionFeel,backgroundValue,blackCoverageTarget,lineWeight,lineColor,accentColor,accentCoverageMax,negativeSpace,eraLanguage,hardRules,negativeTraits,promptPrefix,promptSuffix}}. Be concrete and operational. Profile=${req.body.profile||"GENERIC_VOICE_FIRST"}. ${req.body.profile==="THE_IRON_MIND"?`THE_IRON_MIND hard lock: ${ironMindHardLock()}`:""}`;const r=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:[{role:"user",parts:[{text:prompt},...uploaded.map(x=>({fileData:{fileUri:x.uri,mimeType:x.mime_type}}))]}],config:{responseMimeType:"application/json",temperature:.15}}),parsed=parseJson(r.text);res.json(parsed.styleDNA?parsed:{styleDNA:parsed});}catch(e){console.error(e);res.status(500).json({error:e.message||"Style DNA analysis failed."})}finally{cleanupFiles(files)}});
 
-app.post("/api/regenerate-beat", async (req,res)=>{
-  try {
-    const { beat, profile="GENERIC_VOICE_FIRST", voiceText="", styleDNA=null }=req.body||{}; if(!beat) return res.status(400).json({error:"Beat is required."});
-    const ai=aiClient();
-    const prompt=`Regenerate only the visual plan for this narration beat. Keep start/end/narration unchanged. Return JSON with visualAction, subject, environment, action, camera, motion, imagePrompt, videoPrompt. Profile=${profile}. Voice text context=${voiceText||"[none]"}. STYLE DNA=${styleDNA?JSON.stringify(styleDNA):"[none]"}. Beat=${JSON.stringify(beat)}. Preserve the STYLE DNA exactly across composition, linework, palette, texture, lighting and motion feel. Prefer continuity and subtle motion; no readable generated text or logos.`;
-    const r=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:prompt,config:{responseMimeType:"application/json",temperature:.4}}); const x=parseJson(r.text);
-    res.json({ visualAction:ACTIONS.has(x.visualAction)?x.visualAction:beat.visualAction, visual:{subject:x.subject||"",environment:x.environment||"",action:x.action||"",camera:x.camera||"",motion:x.motion||"",imagePrompt:String(x.imagePrompt||"").replace(/[\r\n]+/g," ").trim(),videoPrompt:String(x.videoPrompt||"").replace(/[\r\n]+/g," ").trim()} });
-  } catch(e){ console.error(e); res.status(500).json({error:e.message||"Regeneration failed."}); }
-});
+app.post("/api/analyze-beats",async(req,res)=>{try{const{phrases=[],profile="GENERIC_VOICE_FIRST",projectId="AVENAN_VOICE_PROJECT",voiceText="",styleDNA=null,brandDNA=null}=req.body||{};if(!Array.isArray(phrases)||!phrases.length)return res.status(400).json({error:"Phrases are required."});const compact=phrases.map(p=>({id:p.id,start:p.start,end:p.end,text:p.text,pauseAfterMs:p.pauseAfterMs,wordsPerSecond:p.wordsPerSecond,pauseClass:p.pauseClass}));const profileText=profile==="THE_IRON_MIND"?ironMindHardLock():"Voice-first visual essay, simple symbolic or realistic composition, restrained motion, continuity before novelty.";const prompt=`You are AVENAN Voice Intelligence. TIMING IS LOCKED. Audio phrase timing is the master timeline. BRAND DNA is the project-level governing standard and outranks generic profile defaults. STYLE DNA is the current visual reference layer and must be consistent with BRAND DNA. VOICE TEXT is semantic reference only. Return JSON {"items":[...]} with exactly one item per phrase in the same order. Fields: id,narrativeFunction(HOOK|SETUP|TENSION|QUESTION|EVIDENCE|REVEAL|REFLECTION|TRANSITION|CTA),emotion,intensity,semanticShift,majorShift,visualAction(HOLD|MICRO_MOTION|COMPOSITION_CHANGE|SHOT_CHANGE|SCENE_CHANGE|SILENCE_HOLD),subject,environment,action,camera,motion,imagePrompt,videoPrompt. Prefer continuity and HOLD/MICRO_MOTION unless meaning changes. Every imagePrompt and videoPrompt must explicitly inherit BRAND DNA and STYLE DNA. Project=${projectId}. PROFILE=${profileText}. BRAND DNA=${brandDNA?JSON.stringify(brandDNA):"[none]"}. STYLE DNA=${styleDNA?JSON.stringify(styleDNA):"[none]"}. VOICE TEXT=${voiceText||"[none]"}. PHRASES=${JSON.stringify(compact)}`;const ai=aiClient(),result=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:prompt,config:{responseMimeType:"application/json",temperature:.2}}),parsed=parseJson(result.text),items=Array.isArray(parsed)?parsed:parsed.items;if(!Array.isArray(items))throw new Error("Semantic analysis returned no items.");const beats=phrases.map((p,i)=>{const x=items[i]||{};return{id:`V${String(i+1).padStart(3,"0")}`,phraseId:p.id,start:p.start,end:p.end,duration:p.duration,narration:p.text,pauseAfterMs:p.pauseAfterMs,pauseClass:p.pauseClass,wordsPerSecond:p.wordsPerSecond,narrativeFunction:x.narrativeFunction||"SETUP",emotion:x.emotion||"neutral",intensity:Number.isFinite(Number(x.intensity))?Math.max(0,Math.min(1,Number(x.intensity))):.5,semanticShift:!!x.semanticShift,majorShift:!!x.majorShift,visualAction:ACTIONS.has(x.visualAction)?x.visualAction:fallbackAction(p),visual:{subject:x.subject||"",environment:x.environment||"",action:x.action||"",camera:x.camera||"locked or subtle push-in",motion:x.motion||"subtle continuous motion",imagePrompt:String(x.imagePrompt||"").replace(/[\r\n]+/g," ").trim(),videoPrompt:String(x.videoPrompt||"").replace(/[\r\n]+/g," ").trim()}}});res.json({beats,voiceTextUsed:!!voiceText,styleDNAUsed:!!styleDNA,brandDNAUsed:!!brandDNA});}catch(e){console.error(e);res.status(500).json({error:e.message||"Beat analysis failed."})}});
 
-async function mountFrontend() {
-  const dist = path.resolve("dist");
-  const builtIndex = path.join(dist, "index.html");
-  if (fs.existsSync(builtIndex)) {
-    app.use(express.static(dist));
-    app.use((req, res, next) => {
-      if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
-      res.sendFile(builtIndex);
-    });
-    return;
-  }
-  const { createServer: createViteServer } = await import("vite");
-  const vite = await createViteServer({server:{middlewareMode:true,host:HOST,allowedHosts:true},appType:"spa"});
-  app.use(vite.middlewares);
-}
+app.post("/api/regenerate-beat",async(req,res)=>{try{const{beat,profile="GENERIC_VOICE_FIRST",voiceText="",styleDNA=null,brandDNA=null}=req.body||{};if(!beat)return res.status(400).json({error:"Beat is required."});const ai=aiClient(),profileLock=profile==="THE_IRON_MIND"?ironMindHardLock():profile,prompt=`Regenerate only the visual plan for this narration beat. Keep start/end/narration unchanged. BRAND DNA outranks generic defaults. Preserve BRAND DNA and STYLE DNA exactly. Return JSON with visualAction,subject,environment,action,camera,motion,imagePrompt,videoPrompt. Profile=${profileLock}. BRAND DNA=${brandDNA?JSON.stringify(brandDNA):"[none]"}. STYLE DNA=${styleDNA?JSON.stringify(styleDNA):"[none]"}. Voice text=${voiceText||"[none]"}. Beat=${JSON.stringify(beat)}. Prefer continuity and subtle motion. No readable generated text or logos unless brand asset explicitly requires it.`;const r=await ai.models.generateContent({model:SEMANTIC_MODEL,contents:prompt,config:{responseMimeType:"application/json",temperature:.3}}),x=parseJson(r.text);res.json({visualAction:ACTIONS.has(x.visualAction)?x.visualAction:beat.visualAction,visual:{subject:x.subject||"",environment:x.environment||"",action:x.action||"",camera:x.camera||"",motion:x.motion||"",imagePrompt:String(x.imagePrompt||"").replace(/[\r\n]+/g," ").trim(),videoPrompt:String(x.videoPrompt||"").replace(/[\r\n]+/g," ").trim()}});}catch(e){console.error(e);res.status(500).json({error:e.message||"Regeneration failed."})}});
 
-async function start() {
-  await mountFrontend();
-  app.listen(PORT, HOST, () => console.log(`AVENAN Voice Intelligence Engine running on http://${HOST}:${PORT}`));
-}
-
-start().catch(err => { console.error("Fatal startup error", err); process.exit(1); });
+async function mountFrontend(){const dist=path.resolve("dist"),builtIndex=path.join(dist,"index.html");if(fs.existsSync(builtIndex)){app.use(express.static(dist));app.use((req,res,next)=>{if(req.method!=="GET"||req.path.startsWith("/api/"))return next();res.sendFile(builtIndex)});return}const{createServer:createViteServer}=await import("vite"),vite=await createViteServer({server:{middlewareMode:true,host:HOST,allowedHosts:true},appType:"spa"});app.use(vite.middlewares)}
+async function start(){await mountFrontend();app.listen(PORT,HOST,()=>console.log(`AVENAN Voice Intelligence Engine running on http://${HOST}:${PORT}`))}
+start().catch(err=>{console.error("Fatal startup error",err);process.exit(1)});
